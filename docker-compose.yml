@@ -1,0 +1,52 @@
+version: '3'
+networks:
+  mycluster:
+    driver: bridge
+
+services:
+  mycluster-slave-1:
+    image: pierrekieffer/spark-hadoop-cluster
+    container_name: mycluster-slave-1
+    networks:
+      - mycluster
+    ports:
+      - 8088
+      - 50070
+      - 50090
+      - 8080
+      - 9000
+      - 8032
+
+  mycluster-slave-2:
+    image: pierrekieffer/spark-hadoop-cluster
+    container_name: mycluster-slave-2
+    networks:
+      - mycluster
+    ports:
+      - 8088
+      - 50070
+      - 50090
+      - 8080
+      - 9000
+      - 8032
+
+  mycluster-master:
+    image: pierrekieffer/spark-hadoop-cluster
+    container_name: mycluster-master
+    environment:
+      - "NODE_TYPE=MASTER"
+    networks:
+      - mycluster
+    ports:
+      - 8088
+      - 50070
+      - 50090
+      - 8080
+      - 9000
+      - 8032
+    depends_on:
+      - mycluster-slave-1
+      - mycluster-slave-2
+
+
+
