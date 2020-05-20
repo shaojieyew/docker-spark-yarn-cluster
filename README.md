@@ -16,6 +16,12 @@ This application allows to deploy multi-nodes hadoop cluster with spark 2.4.1 on
 - spark-shell : `spark-shell --master yarn --deploy-mode client`
 - spark : `spark-submit --master yarn --deploy-mode client or cluster --num-executors 2 --executor-memory 4G --executor-cores 4 --class org.apache.spark.examples.SparkPi $SPARK_HOME/examples/jars/spark-examples_2.11-2.4.1.jar`
 
+## [linux] To submit spark applications from localhost to cluster :
+ - add `127.0.0.1     mycluster-master` to /etc/hosts
+ - copy core-site.xml, yarn-site.xml to hadoop config folder
+ - copy spark-env.sh to conf folder, make sure HADOOP_CONF_DIR is point to hadooop config folder
+
+
 - Access to Hadoop cluster Web UI : <container ip>:8088 
 - Access to spark Web UI : <container ip>:8080
 - Access to hdfs Web UI : <container ip>:50070
@@ -23,8 +29,6 @@ This application allows to deploy multi-nodes hadoop cluster with spark 2.4.1 on
 ## Stop 
 - `docker stop $(docker ps -a -q)`
 - `docker container prune`
-
-
 
 
 
