@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+package org.example.streaming;
+
+message LoginLog {
+  string srcIp = 1;
+  string dstIp = 2;
+  string username = 3;
+  string password = 4;
+  google.protobuf.Timestamp loginTimestamp = 5;
+  google.protobuf.Timestamp recordedTimestamp = 6;
+}
