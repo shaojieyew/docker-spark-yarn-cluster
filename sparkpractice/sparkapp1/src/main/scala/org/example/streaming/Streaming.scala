@@ -15,8 +15,6 @@ import org.apache.spark.SparkContext
 object Streaming {
   case class LoginAttempt(loginLog: LoginLog, srcDstIp:String, credentialPair: String, loginTime: Timestamp, recordedTime: Timestamp)
 
-
-
   val wrapData = (loginLog: LoginLog) => {
     LoginAttempt(
       loginLog,
@@ -51,54 +49,57 @@ object Streaming {
       .map(wrapData).as[LoginAttempt](Encoders.product[LoginAttempt])
 
 
-    mainDf.writeStream.foreachBatch((batchDF: Dataset[LoginAttempt], batchId: Long)  => {
-      // write current microbatch to parquet
-      batchDF.write
-        .format("parquet")
-        .partitionBy("srcDstIp")
+    mainDf.writeStream.foreachBatch((batchDS: Dataset[LoginAttempt], batchId: Long)  => {
+
+      val logParquet = "src/main/resources/loginLog.parquet"
+      val lastUpdateParquet = "src/main/resources/loginLog_lastUpdate.parquet"
+      val updateInterval = 24*60*60*1000L
+
+
+      val fs = org.apache.hadoop.fs.FileSystem.get(spark.sparkContext.hadoopConfiguration)
+      val lastUpdatefileExist = fs.exists(new org.apache.hadoop.fs.Path(lastUpdateParquet))
+      if(( lastUpdatefileExist && System.currentTimeMillis()-spark.read.parquet(lastUpdateParquet).as[Long].first()>updateInterval)
+        || !lastUpdatefileExist) {
+          //update record from oracle
+          //overwrite data to parquet
+          Seq(System.currentTimeMillis()).toDS().write.parquet(lastUpdateParquet)
+      }
+
+
+      batchDS.write.partitionBy("srcDstIp")
         .mode("append")
-        .save("src/main/resources/loginLog.parquet")
-      // read all from parquet
-      val df = spark
-        .read
-        .format("parquet")
-        .load("src/main/resources/loginLog.parquet").as[LoginAttempt]
-      df.persist()
+        .parquet(logParquet)
 
-       // get max recordedTime
-      val timeThreshold = 1L*60L*1000L
-      val maxtime = df.groupBy().agg(max(df("recordedTime"))).collect()(0).getAs[Timestamp](0)
-      maxtime.setTime(maxtime.getTime-(timeThreshold))
-      val maxtimeBroadcast = spark.sparkContext.broadcast(maxtime)
+      val ds = spark.read.parquet(logParquet).as[LoginAttempt]
+        .persist()
+      if(!ds.isEmpty){
 
-      // get all srcDst recorded within last 2 hours from max recordedTime
-      val recentSrcDst = df.filter(log=>{(log.recordedTime.getTime - maxtimeBroadcast.value.getTime>0)})
-        .select("srcDstIp").withColumnRenamed("srcDstIp", "recentSrcDstIp").dropDuplicates()
-        recentSrcDst.show(100000, truncate = false)
+        val timeThreshold = 120L*60L*1000L
+        val maxTime = ds.groupBy().agg(max(ds("recordedTime"))).collect()(0).getAs[Timestamp](0)
+        maxTime.setTime(maxTime.getTime-(timeThreshold))
 
-      // get all without recent
-      val workingDf = df.filter(log=>{(log.recordedTime.getTime - maxtimeBroadcast.value.getTime<=0)})
-        .join(recentSrcDst,$"srcDstIp" === $"recentSrcDstIp","leftanti").drop($"recentSrcDstIp").as[LoginAttempt]
+        val recentSrcDst = ds.filter(log=>{(log.recordedTime.getTime > maxTime.getTime)})
+          .select("srcDstIp")
+          .withColumnRenamed("srcDstIp", "recentSrcDstIp")
+            .dropDuplicates()
 
-      val computeUniqueRate = workingDf.groupByKey(_.srcDstIp)
-        .mapGroups((srcDstIp, itr) => {(srcDstIp, itr.toSeq, itr.map(_.credentialPair).toSeq)})
-        .map( srcDstAttempts => {(srcDstAttempts._1,
-          srcDstAttempts._2,
-          srcDstAttempts._3.distinct.length.toFloat/srcDstAttempts._3.length.toFloat,
-          srcDstAttempts._3.length)}).as[(String, Seq[LoginAttempt], Float, Int)]
+        val workingDf = ds.filter(log=>{(log.recordedTime.getTime <= maxTime.getTime)})
+          .join(recentSrcDst,$"srcDstIp" === $"recentSrcDstIp","leftanti")
+          .drop($"recentSrcDstIp").as[LoginAttempt]
 
-      var nonSpamDf1 = computeUniqueRate.filter(x=>{if(x._3<0.75F || x._4<10){
-        true
-      }else{
-        false
-      }}).map(x=>{(x._1,x._2)})
+        val computeUniqueRate = workingDf.map(log => {(log.srcDstIp, Seq(log), Seq(log.credentialPair))})
+          .groupByKey(_._1)
+          .reduceGroups((a, b) => (a._1, a._2++b._2, a._3++b._3))
+          .map(x=>(x._1, x._2._2, x._2._3.distinct.length.toFloat/x._2._3.length.toFloat, x._2._2.length))
+          .as[(String, Seq[LoginAttempt], Float, Int)]
 
-      var nonSpamDf2 = computeUniqueRate.filter(_._3>0.75F).map(x=>{(x._1,x._2)})
-          .filter(x=>{
-            val attempts = x._2.sortWith((x,y)=>{(x.loginTime.getTime<y.loginTime.getTime)})
-            val attemptsCount = attempts.length
-            var isSpam = false
-            var i =0
+        val nonSpam = computeUniqueRate.filter(x=>{
+          val attempts = x._2.sortWith((x,y)=>{(x.loginTime.getTime<y.loginTime.getTime)})
+          val attemptsCount = attempts.length
+          var isSpam = false
+          var i =0
+
+          if(x._3>=0.75F && x._4>10){
             if(attemptsCount>=20){
               while(i < attemptsCount-19 && !isSpam){
                 if(attempts(i+19).loginTime.getTime - attempts(i).loginTime.getTime< 120L*60L*1000L ){
@@ -114,105 +115,27 @@ object Streaming {
               }
               i=i+1
             }
-            !isSpam
-          }).map(x=>{(x._1,x._2)})
+          }
+          !isSpam
+        })
 
-      var nonSpam = nonSpamDf1.union(nonSpamDf2)
-      nonSpam.show(100000, truncate = false)
+        nonSpam.show()
+        // join nonspam and data from oracle
+        // output result to kafka?
 
-      recentSrcDst.unpersist()
-      df.unpersist()
+        ds.join(recentSrcDst,$"srcDstIp" === $"recentSrcDstIp","inner")
+          .drop($"recentSrcDstIp").as[LoginAttempt]
+          .write
+          .partitionBy("srcDstIp")
+          .mode("overwrite")
+          .parquet(logParquet)
 
-      /*
-
-
-      // Save all recent srcDst and remove all log > time threshold
-      val saveDf = df.joinWith(recentSrcDst,$"srcDstIp" === $"recentSrcDstIp","rightouter")
-        .map(_._1)
-      saveDf.write
-        .format("parquet")
-        .partitionBy("srcDstIp")
-        .mode("overwrite")
-        .save("src/main/resources/loginLog.parquet")
-       */
-
-
-      /*
-*/
-      /*
-     val nonSpammer = computeUniqueRate.filter(srcDstAttemptsUniqueRate=>{
-       srcDstAttemptsUniqueRate._3<0.75F || srcDstAttemptsUniqueRate._4<100000000
-     }).map(nonSpammerSrcDstAttempts=>{
-       nonSpammerSrcDstAttempts._2
-     }).flatMap(_.toList).map(_.loginLog)
-       */
-
-
-
+      }
+      ds.unpersist(true)
     })
-    .trigger(Trigger.ProcessingTime(5*1000))
+    .trigger(Trigger.ProcessingTime(15*1000L))
     .outputMode(OutputMode.Append())
     .option("checkpointLocation", "src/main/resources/checkpoint")
     .start().awaitTermination()
-
-
-
-    /*
-    val df = mainDf.withWatermark("recordedTime", "4 hours").withColumnRenamed("srcDstIp", "srcDstIp1")
-      .join(mainDf.withWatermark("recordedTime", "2 hours").withColumnRenamed("srcDstIp", "srcDstIp2")
-      ,$"srcDstIp1" === $"srcDstIp2","leftanti")
-    df.writeStream.format("console")
-  .outputMode("update")
-  .start()
-  .awaitTermination()
-*/
-    /*
-    val grpMaxTime = df.map(log=>((1, Seq[LoginAttempt](log),log.recordedTime)))
-      .groupByKey(_._1)
-      .reduceGroups((a,b)=>{(1, a._2++b._2, if(a._3.getTime>b._3.getTime){a._3 } else {b._3})})
-      .flatMap(x=>x._2._2.map(y=>y.copy(globalMaxTime = x._2._3)).toList)
-
-    val grpMaxTime2 = grpMaxTime.map(x=>{(x.srcDstIp , (Seq[LoginAttempt](x),x.recordedTime)) })
-      .groupByKey(_._1)
-      .reduceGroups((a, b)=> {(a._1,(a._2._1++b._2._1, if(a._2._2.getTime>b._2._2.getTime){a._2._2 } else {b._2._2}))})
-      .flatMap(x=>x._2._2._1.map(y=>y.copy(localMaxTime = x._2._2._2)).toList)
-
-    val grpMaxTime111 = df.map(log=>(log.srcDstIp, (Seq[LoginAttempt](log),log.recordedTime) )).as[(String, (Seq[LoginAttempt],Timestamp))]
-      .groupByKey(_._1)
-      .reduceGroups((a, b)=> {(a._1,(a._2._1++b._2._1, if(a._2._2.getTime>b._2._2.getTime){a._2._2 } else {b._2._2}))})
-      .map(x=>{(x._2._1,x._2._2._1, x._2._2._2)})
-      .map(x=>{(Seq(x), x._3, 1)})
-      .groupByKey(_._3)
-      .reduceGroups((a,b)=>{(a._1++b._1, if(a._2.getTime>b._2.getTime){a._2 } else {b._2}, 1)})
-      .map(x=>{x._2._1.filter(l=>{(x._2._2.getTime-(120L*60L)>l._3.getTime)}) })
-      .flatMap(x=>x.toList)
-
-
-
-
-    grpMaxTime2.writeStream.format("console")
-      .outputMode("update")
-      .start()
-      .awaitTermination()
-*/
-
-    /*
-    val df1 = df
-      .map(log => (log.srcDstIp, (log , 1, Seq[String](log.credentialPair)))).as[(String, (LoginAttempt, Int, Seq[String]))]
-
-
-
-    val df2 = df1.groupByKey(_._1)
-        .reduceGroups((a, b) => {( a._1, (a._2._1,a._2._2 + b._2._2 , a._2._3 ++ b._2._3 ) )})
-        .map( x=>{
-          (x._1,x._2._2._3.distinct.length.toFloat/x._2._2._2.toFloat)
-        }).as[(String, Float)]
-        .filter(x=>{x._2<0.75F})
-
-
-    df2.writeStream.format("console")
-      .outputMode("update")
-      .start()
-      .awaitTermination()*/
   }
 }
