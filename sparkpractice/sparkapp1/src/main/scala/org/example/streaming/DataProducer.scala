@@ -29,7 +29,7 @@ object DataProducer {
         })
       }
       producer.close()
-      Thread.sleep(1000L)
+      Thread.sleep(5000L)
     }
   }
 
@@ -83,7 +83,7 @@ object DataProducer {
   def createLog(id: Int): LoginLog ={
     val srcIp = System.nanoTime().toString+id.toString
     val dstIp = System.nanoTime().toString+id.toString
-    val username =  "username"+Random.nextInt(100)
+    val username =  "username"+Random.nextInt(10)
     val password = Random.alphanumeric.filter(_.isDigit).take(15).mkString
     val time = Instant.now
     val timestamp = Timestamp.defaultInstance.copy(seconds = time.getEpochSecond, nanos = time.getNano)
