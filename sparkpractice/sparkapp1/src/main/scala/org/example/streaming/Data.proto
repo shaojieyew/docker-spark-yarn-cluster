@@ -11,3 +11,8 @@ message LoginLog {
   google.protobuf.Timestamp loginTimestamp = 5;
   google.protobuf.Timestamp recordedTimestamp = 6;
 }
+message output {
+  string srcIp = 1;
+  string dstIp = 2;
+  google.protobuf.Timestamp loginTimestamp = 5;
+}
