@@ -30,7 +30,7 @@ object Streaming1 {
 
     val spark = SparkSession.builder()
       .appName("SparkSQLApp")
-      .master("local[*]")
+      .master("local[1]")
       .getOrCreate()
     import spark.implicits._
 
