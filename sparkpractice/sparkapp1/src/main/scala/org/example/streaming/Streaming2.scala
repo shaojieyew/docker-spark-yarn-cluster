@@ -148,7 +148,7 @@ object Streaming2 {
 
       recentSrcDst.unpersist()
       ds.unpersist()
-
+      
       println("TOTAL PENDING COUNT: "+holdingDf.count())
       //holdingDf.show(10)
       println("TOTAL NONSPAM COUNT: "+nonSpamDf.count())
