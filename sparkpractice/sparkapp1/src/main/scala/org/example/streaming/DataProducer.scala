@@ -23,7 +23,7 @@ object DataProducer {
       val producer = new KafkaProducer[String, Array[Byte]](props)
       for(i <- 1 to attempt){
         Random.shuffle(generateLoginLogs(i)).foreach(log=>{
-          val record = new ProducerRecord[String, Array[Byte]]("login", log.dstIp+log.srcIp, log.toByteArray)
+          val record = new ProducerRecord[String, Array[Byte]]("credential", log.dstIp+log.srcIp, log.toByteArray)
           //println(log)
           producer.send(record)
         })

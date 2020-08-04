@@ -41,7 +41,7 @@ object StreamingAccumulative {
       .option("kafka.bootstrap.servers", "localhost:29092")
       .option("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
       .option("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer")
-      .option("subscribe", "login")
+      .option("subscribe", "credential")
       .option("startingOffsets", "earliest")
       .load().select("value").as[Array[Byte]].map(LoginLog.parseFrom)
       .as[LoginLog](Encoders.product[LoginLog])

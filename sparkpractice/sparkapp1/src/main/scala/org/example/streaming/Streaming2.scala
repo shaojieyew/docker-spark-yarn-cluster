@@ -48,7 +48,7 @@ object Streaming2 {
       .option("kafka.bootstrap.servers", "localhost:29092")
       .option("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
       .option("value.deserializer", "org.apache.kafka.common.serialization.ByteArrayDeserializer")
-      .option("subscribe", "login")
+      .option("subscribe", "credential")
       .option("startingOffsets", "earliest")
       .load().select("value").as[Array[Byte]].map(LoginLog.parseFrom)
       .as[LoginLog](Encoders.product[LoginLog])
@@ -95,8 +95,8 @@ object Streaming2 {
         .map(x=>(x._1,x._2,x._3,x._4,{
 
           val loginTimestamps = x._2.map(s=>s.loginTime)
-          val min = loginTimestamps.min
-          val max = loginTimestamps.max
+          val min = loginTimestamps.reduce((A,B)=>{if(A.before(B)) { A} else {B}})
+          val max = loginTimestamps.reduce((A,B)=>{if(A.after(B)) { A} else {B}})
           val attemptRate = ((max.getTime - min.getTime) / x._4)/1000
           val attemptsCount = x._2.length
 
