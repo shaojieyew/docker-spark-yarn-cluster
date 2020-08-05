@@ -6,26 +6,29 @@ import org.example.streaming.Data.LoginLog
 object KafkaSparkSQL {
   def main(args: Array[String]): Unit ={
     /*
-    val kafkaQuery = args(1)
-    val offset = args(2)
-    val topic = args(3)
+    val kafkaHost = args(0)
+    val topic = args(1)
+    val offset = if(args(2).length==0){"earliest"}else{args(2)}
+    val kafkaQuery = args(3)
     val schema = args(4)
     val query = args(5)
     val limit = args(6).toInt
     val truncate = args(7).toBoolean
-     */
-    runQuery(
-      Array(
-        "localhost:29092",
-        "select * from kafka",
-        "earliest",
-        "credential",
-        "LoginsLog",
-        "select * from credential ",
-        "100",
-        "true")
-    )
-    //runQuery(args)
+    */
+   runQuery(
+     Array(
+       "localhost:29092",
+       "credential",
+       """{"credential":{"0":0,"1":0,"2":2}}""",
+       "select * from kafka",
+       "LoginLog",
+       "select count(*) from LoginLog where password = '434365041118172' ",
+       "100",
+       "true")
+   )
+    /*
+    runQuery(args)
+    */
   }
 
   def runQuery(args: Array[String]): Unit ={
@@ -33,16 +36,17 @@ object KafkaSparkSQL {
       .master("local[*]")
       .getOrCreate()
 
-    val kafkaQuery = args(1)
+    val kafkaHost = args(0)
+    val topic = args(1)
     val offset = if(args(2).length==0){"earliest"}else{args(2)}
-    val topic = args(3)
+    val kafkaQuery = args(3)
     val schema = args(4)
     val query = args(5)
     val limit = args(6).toInt
     val truncate = args(7).toBoolean
 
-    val df = spark.read.format("kafka")
-      .option("kafka.bootstrap.servers",args(0))
+    spark.read.format("kafka")
+      .option("kafka.bootstrap.servers",kafkaHost)
       .option("subscribe",topic)
       .option("startingOffsets",offset)
       .option("endingOffsets","latest")
@@ -51,14 +55,13 @@ object KafkaSparkSQL {
     val kafkaDf = spark.sql(kafkaQuery)
 
     import spark.implicits._
-
     val dfValue = kafkaDf.map(row=>{
       row.getAs[Array[Byte]]("value")
     })
     var kafkaRecord = false
     schema match {
       case loginLogSchema if LoginLog.getClass.getSimpleName.dropRight(1).equals(loginLogSchema) =>{
-        dfValue.map(LoginLog.parseFrom).createTempView(topic)
+        dfValue.map(LoginLog.parseFrom).createTempView(schema)
       }
       case _ =>  {
         kafkaRecord = true
